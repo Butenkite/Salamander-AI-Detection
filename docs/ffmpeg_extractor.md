@@ -24,8 +24,8 @@ Options:
 Examples:
 
 ```powershell
-.\scripts\extract_every_nth_frame.ps1 -InputVideo .\clip.mp4 -OutputDir .\frames_out -Nth 5
-.\scripts\extract_every_nth_frame.ps1 -InputVideo .\clip.mp4 -ImageFormat jpg
+.\scripts\extract_every_nth_frame.ps1 -InputVideo .\videos\ensantina.mp4 -OutputDir .\frames_out -Nth 54
+.\scripts\extract_every_nth_frame.ps1 -InputVideo .\videos\ensantina.mp4 -ImageFormat jpg
 ```
 
 **Frame indexing:** sampling uses FFmpeg’s zero-based input frame index `n`. With `-Nth 5`, exported frames correspond to source frames **0, 5, 10, 15, …** (not 1, 6, 11, …).
