@@ -174,3 +174,48 @@ python scripts\train.py --help
 | `scripts\train.py` | Fine-tune YOLO via Ultralytics |
 
 More detail on FFmpeg options: [docs/ffmpeg_extractor.md](docs/ffmpeg_extractor.md).
+
+---
+
+## 7. Detector web UI (FastAPI + React)
+
+A small web app lets you upload a video, run the trained model, and see
+bounding boxes drawn on top of the playing video.
+
+It has two parts:
+
+| Part | Where | What |
+|------|-------|------|
+| API | [`api/main.py`](api/main.py) | FastAPI service that runs `best.pt` on the uploaded video and returns per-frame normalized boxes. |
+| UI  | [`frontend/`](frontend/) | Vite + React + TypeScript app that uploads, plays the video, and overlays boxes on a canvas. |
+
+### Run it locally
+
+**Terminal 1 — API (from the repo root, venv active):**
+
+```powershell
+python -m pip install -r requirements.txt
+uvicorn api.main:app --reload --port 8000
+```
+
+By default the API loads `runs\detect\run1\weights\best.pt`. Override with:
+
+```powershell
+$env:SALAMANDER_WEIGHTS = "runs\detect\salamander_run1\weights\best.pt"
+$env:SALAMANDER_IMGSZ   = "320"   # match training
+$env:SALAMANDER_CONF    = "0.25"
+uvicorn api.main:app --reload --port 8000
+```
+
+**Terminal 2 — frontend:**
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open the printed URL (default `http://127.0.0.1:5173`), pick a video, click
+**Analyze**, and the boxes will be drawn live on top of the playing video.
+The API URL the frontend uses is configurable via `frontend\.env.local`
+(`VITE_API_URL=http://localhost:8000`).

@@ -5,3 +5,11 @@ runs/
 data/
 extractedData/
 augmentations.pdf
+__pycache__/
+videos/
+*.pt
+
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local

@@ -1,1 +1,6 @@
 ultralytics>=8.3.0
+matplotlib>=3.7
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+opencv-python>=4.8

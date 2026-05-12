@@ -1,0 +1,21 @@
+:root {
+  --color-text: #222;
+  --color-muted: #666;
+  --color-bg: #fff;
+  --color-panel: #f4f4f4;
+  --color-border: #bbb;
+  --color-accent: #2a7a3a;
+  --color-accent-fill: rgba(42, 122, 58, 0.18);
+  --color-error: #b00020;
+
+  --space-xs: 2px;
+  --space-sm: 4px;
+  --space-md: 8px;
+  --space-lg: 16px;
+
+  --radius: 3px;
+
+  --font-body: system-ui, sans-serif;
+  --font-size-base: 14px;
+  --font-size-small: 12px;
+}
