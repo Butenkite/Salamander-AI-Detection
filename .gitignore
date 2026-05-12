@@ -1,2 +1,7 @@
 venv
 frames_out
+data/dataset/
+runs/
+data/
+extractedData/
+augmentations.pdf
