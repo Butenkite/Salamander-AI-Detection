@@ -25,6 +25,7 @@ Examples:
 
 ```powershell
 .\scripts\extract_every_nth_frame.ps1 -InputVideo .\videos\ensantina.mp4 -OutputDir .\frames_out -Nth 54
+.\scripts\extract_every_nth_frame.ps1 -InputVideo .\videos\salawalk.mp4 -OutputDir .\frames_out -Nth 24
 .\scripts\extract_every_nth_frame.ps1 -InputVideo .\videos\ensantina.mp4 -ImageFormat jpg
 ```
 
