@@ -206,9 +206,10 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
                 }
             )
 
-            results_iter = model(
+            results_iter = model.track(
                 source=str(tmp_path),
                 stream=True,
+                persist=True,
                 imgsz=_imgsz(),
                 conf=_conf(),
                 device=_device(),
@@ -223,9 +224,14 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
                     xyxy = boxes.xyxy.cpu().numpy()
                     confs = boxes.conf.cpu().numpy() if boxes.conf is not None else None
                     clss = boxes.cls.cpu().numpy().astype(int) if boxes.cls is not None else None
+                    ids = boxes.id.cpu().numpy().astype(int) if boxes.id is not None else None
                     for i in range(len(xyxy)):
                         x1, y1, x2, y2 = xyxy[i].tolist()
+                        print("Frame:", frame_idx)
+                        print("Top-left:", x1, y1)
+                        print("Bottom-right:", x2, y2)
                         cls_id = int(clss[i]) if clss is not None else -1
+                        track_id = int(ids[i]) if ids is not None else None
                         boxes_out.append(
                             {
                                 "x1": float(x1) / width,
