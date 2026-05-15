@@ -12,11 +12,19 @@ type Status =
   | { kind: "ok"; total: number }
   | { kind: "error"; message: string };
 
+type TrackMetric = {
+  track_id: number;
+  label: string;
+  frames_seen: number;
+  time_on_screen_s: number;
+};
+
 export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [meta, setMeta] = useState<AnalyzeMeta | null>(null);
   const [frames, setFrames] = useState<DetectionFrame[]>([]);
+  const [tracks, setTracks] = useState<TrackMetric[]>([]);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const abortRef = useRef<AbortController | null>(null);
 
@@ -58,7 +66,8 @@ export default function App() {
         signal: controller.signal,
         onMeta: (m) => setMeta(m),
         onFrame: (f) => setFrames((prev) => [...prev, f]),
-        onDone: (total) => setStatus({ kind: "ok", total }),
+        onDone: (total, tracks = []) => {setTracks(tracks); setStatus({ kind: "ok", total });
+      },
       });
     } catch (err) {
       if (controller.signal.aborted) return;
@@ -160,6 +169,29 @@ export default function App() {
               </tbody>
             </table>
           )}
+            {tracks.length > 0 && (
+            <table className="meta">
+              <thead>
+                <tr>
+                  <th>Track ID</th>
+                  <th>Label</th>
+                  <th>Frames Seen</th>
+                  <th>Time on Screen</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {tracks.map((track) => (
+                  <tr key={track.track_id}>
+                    <td>{track.track_id}</td>
+                    <td>{track.label}</td>
+                    <td>{track.frames_seen}</td>
+                    <td>{track.time_on_screen_s.toFixed(2)} s</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            )}
         </>
       )}
     </div>

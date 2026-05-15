@@ -38,7 +38,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any, Iterator
-
+from collections import defaultdict
 import cv2
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -194,6 +194,8 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
 
     def stream() -> Iterator[bytes]:
         emitted = 0
+        frames_seen = defaultdict(int)
+        label_for = {}
         csv_path = REPO_ROOT / "videos" / "tracks.csv"
         csv_path.parent.mkdir(exist_ok=True)
 
@@ -250,6 +252,9 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
                         print("Bottom-right:", x2, y2)
                         cls_id = int(clss[i]) if clss is not None else -1
                         track_id = int(ids[i]) if ids is not None else None
+                        if track_id is not None:
+                            frames_seen[track_id] += 1
+                            label_for[track_id] = class_names.get(str(cls_id), str(cls_id))
                         csv_writer.writerow([
                         frame_idx,
                         round(t_sec, 2),
@@ -283,7 +288,25 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
                 )
                 emitted += 1
 
-            yield _ndjson({"type": "done", "total_frames": emitted})
+            tracks = [
+                {
+                    "track_id": tid,
+                    "label": label_for[tid],
+                    "frames_seen": count,
+                    "time_on_screen_s": round(count / fps, 2),
+                }
+                for tid, count in frames_seen.items()
+            ]
+
+            print("frames_seen:", dict(frames_seen))
+            print("label_for:", label_for)
+
+            yield _ndjson({
+                "type": "done",
+                "total_frames": emitted,
+                "tracks": tracks,
+            })
+
         except Exception as exc:
             logger.exception("Error during streaming inference")
             try:

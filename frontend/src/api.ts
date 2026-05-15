@@ -26,8 +26,26 @@ export interface AnalyzeMeta {
 export interface AnalyzeCallbacks {
   onMeta: (meta: AnalyzeMeta) => void;
   onFrame: (frame: DetectionFrame) => void;
-  onDone: (totalFrames: number) => void;
+  onDone: (totalFrames: number, tracks: TrackMetric[]) => void;
   signal?: AbortSignal;
+}
+
+export interface DetectionBox {
+  track_id: number | null;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  conf: number | null;
+  cls: number;
+  label: string;
+}
+
+export interface TrackMetric {
+  track_id: number;
+  label: string;
+  frames_seen: number;
+  time_on_screen_s: number;
 }
 
 const API_URL: string =
@@ -91,7 +109,7 @@ export async function analyzeVideoStream(
         cb.onFrame(msg as unknown as DetectionFrame);
       } else if (msg.type === "done") {
         total = (msg.total_frames as number) ?? total;
-        cb.onDone(total);
+        cb.onDone(total, (msg.tracks as TrackMetric[]) ?? []);
       } else if (msg.type === "error") {
         throw new Error(String(msg.message ?? "Server reported an error."));
       }
