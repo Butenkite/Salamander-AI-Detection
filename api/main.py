@@ -31,6 +31,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -193,6 +194,23 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
 
     def stream() -> Iterator[bytes]:
         emitted = 0
+        csv_path = REPO_ROOT / "videos" / "tracks.csv"
+        csv_path.parent.mkdir(exist_ok=True)
+
+        csv_file = open(csv_path, "w", newline="")
+        csv_writer = csv.writer(csv_file)
+
+        csv_writer.writerow([
+            "frame_idx",
+            "time_seconds",
+            "track_id",
+            "label",
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "confidence"
+        ])
         try:
             yield _ndjson(
                 {
@@ -232,8 +250,20 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
                         print("Bottom-right:", x2, y2)
                         cls_id = int(clss[i]) if clss is not None else -1
                         track_id = int(ids[i]) if ids is not None else None
+                        csv_writer.writerow([
+                        frame_idx,
+                        round(t_sec, 2),
+                        track_id,
+                        class_names.get(str(cls_id), str(cls_id)),
+                        round(float(x1), 2),
+                        round(float(y1), 2),
+                        round(float(x2), 2),
+                        round(float(y2), 2),
+                        round(float(confs[i]), 4) if confs is not None else None
+                    ])
                         boxes_out.append(
                             {
+                                "track_id": track_id,
                                 "x1": float(x1) / width,
                                 "y1": float(y1) / height,
                                 "x2": float(x2) / width,
@@ -261,9 +291,11 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
             except Exception:
                 pass
         finally:
+            csv_file.close()
             try:
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 logger.warning("Could not delete temp file %s", tmp_path)
 
     return StreamingResponse(stream(), media_type="application/x-ndjson")
+    
