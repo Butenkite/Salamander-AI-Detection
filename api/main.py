@@ -38,6 +38,7 @@ import os
 import tempfile
 from pathlib import Path
 from typing import Any, Iterator
+from threading import Thread
 from collections import defaultdict
 import cv2
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -88,6 +89,7 @@ def _allowed_origins() -> list[str]:
 
 
 app = FastAPI(title="Salamander video detector", version="0.1.0")
+job = {"status": "idle"}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),
@@ -133,6 +135,117 @@ def health() -> dict[str, Any]:
         "conf": _conf(),
         "device": _device(),
     }
+
+def run_analyze_job(
+    tmp_path: Path,
+    fps: float,
+    width: int,
+    height: int,
+    frame_count: int,
+    class_names: dict[str, str],
+) -> None:
+    try:
+        job.clear()
+        job["status"] = "processing"
+        job["percent"] = 0
+
+        model = get_model()
+
+        frames_seen = defaultdict(int)
+        label_for = {}
+
+        csv_path = REPO_ROOT / "videos" / "tracks.csv"
+        csv_path.parent.mkdir(exist_ok=True)
+
+        with open(csv_path, "w", newline="") as csv_file:
+            csv_writer = csv.writer(csv_file)
+
+            csv_writer.writerow([
+                "frame_idx",
+                "time_seconds",
+                "track_id",
+                "label",
+                "x1",
+                "y1",
+                "x2",
+                "y2",
+                "confidence"
+            ])
+
+            results_iter = model.track(
+                source=str(tmp_path),
+                stream=True,
+                persist=True,
+                imgsz=_imgsz(),
+                conf=_conf(),
+                device=_device(),
+                verbose=False,
+            )
+
+            for frame_idx, result in enumerate(results_iter):
+                t_sec = frame_idx / fps if fps > 0 else 0.0
+
+                boxes = getattr(result, "boxes", None)
+
+                if boxes is not None and len(boxes) > 0:
+                    xyxy = boxes.xyxy.cpu().numpy()
+                    confs = boxes.conf.cpu().numpy() if boxes.conf is not None else None
+                    clss = boxes.cls.cpu().numpy().astype(int) if boxes.cls is not None else None
+                    ids = boxes.id.cpu().numpy().astype(int) if boxes.id is not None else None
+
+                    for i in range(len(xyxy)):
+                        x1, y1, x2, y2 = xyxy[i].tolist()
+
+                        cls_id = int(clss[i]) if clss is not None else -1
+                        track_id = int(ids[i]) if ids is not None else None
+                        label = class_names.get(str(cls_id), str(cls_id))
+
+                        if track_id is not None:
+                            frames_seen[track_id] += 1
+                            label_for[track_id] = label
+
+                        csv_writer.writerow([
+                            frame_idx,
+                            round(t_sec, 2),
+                            track_id,
+                            label,
+                            round(float(x1), 2),
+                            round(float(y1), 2),
+                            round(float(x2), 2),
+                            round(float(y2), 2),
+                            round(float(confs[i]), 4) if confs is not None else None
+                        ])
+
+                if frame_count > 0:
+                    job["percent"] = int(((frame_idx + 1) / frame_count) * 100)
+
+        tracks = [
+            {
+                "track_id": tid,
+                "label": label_for[tid],
+                "frames_seen": count,
+                "time_on_screen_s": round(count / fps, 2),
+            }
+            for tid, count in frames_seen.items()
+        ]
+
+        job.clear()
+        job["status"] = "done"
+        job["percent"] = 100
+        job["result"] = {
+            "tracks": tracks,
+        }
+
+        tmp_path.unlink(missing_ok=True)
+
+    except Exception as e:
+        job.clear()
+        job["status"] = "error"
+        job["message"] = str(e)
+
+@app.get("/analyze")
+def get_analyze_status() -> dict[str, Any]:
+    return job
 
 
 def _probe_video(path: Path) -> tuple[float, int, int, int]:
@@ -192,133 +305,13 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
         tmp_path.unlink(missing_ok=True)
         raise
 
-    def stream() -> Iterator[bytes]:
-        emitted = 0
-        frames_seen = defaultdict(int)
-        label_for = {}
-        csv_path = REPO_ROOT / "videos" / "tracks.csv"
-        csv_path.parent.mkdir(exist_ok=True)
+    Thread(
+        target=run_analyze_job,
+        args=(tmp_path, fps, width, height, frame_count, class_names),
+        daemon=True,
+    ).start()
 
-        csv_file = open(csv_path, "w", newline="")
-        csv_writer = csv.writer(csv_file)
-
-        csv_writer.writerow([
-            "frame_idx",
-            "time_seconds",
-            "track_id",
-            "label",
-            "x1",
-            "y1",
-            "x2",
-            "y2",
-            "confidence"
-        ])
-        try:
-            yield _ndjson(
-                {
-                    "type": "meta",
-                    "fps": fps,
-                    "width": width,
-                    "height": height,
-                    "frame_count": frame_count,
-                    "duration_sec": duration_sec,
-                    "class_names": class_names,
-                }
-            )
-
-            results_iter = model.track(
-                source=str(tmp_path),
-                stream=True,
-                persist=True,
-                imgsz=_imgsz(),
-                conf=_conf(),
-                device=_device(),
-                verbose=False,
-            )
-
-            for frame_idx, result in enumerate(results_iter):
-                t_sec = frame_idx / fps if fps > 0 else 0.0
-                boxes_out: list[dict[str, Any]] = []
-                boxes = getattr(result, "boxes", None)
-                if boxes is not None and len(boxes) > 0:
-                    xyxy = boxes.xyxy.cpu().numpy()
-                    confs = boxes.conf.cpu().numpy() if boxes.conf is not None else None
-                    clss = boxes.cls.cpu().numpy().astype(int) if boxes.cls is not None else None
-                    ids = boxes.id.cpu().numpy().astype(int) if boxes.id is not None else None
-                    for i in range(len(xyxy)):
-                        x1, y1, x2, y2 = xyxy[i].tolist()
-                        print("Frame:", frame_idx)
-                        print("Top-left:", x1, y1)
-                        print("Bottom-right:", x2, y2)
-                        cls_id = int(clss[i]) if clss is not None else -1
-                        track_id = int(ids[i]) if ids is not None else None
-                        if track_id is not None:
-                            frames_seen[track_id] += 1
-                            label_for[track_id] = class_names.get(str(cls_id), str(cls_id))
-                        csv_writer.writerow([
-                        frame_idx,
-                        round(t_sec, 2),
-                        track_id,
-                        class_names.get(str(cls_id), str(cls_id)),
-                        round(float(x1), 2),
-                        round(float(y1), 2),
-                        round(float(x2), 2),
-                        round(float(y2), 2),
-                        round(float(confs[i]), 4) if confs is not None else None
-                    ])
-                        boxes_out.append(
-                            {
-                                "track_id": track_id,
-                                "x1": float(x1) / width,
-                                "y1": float(y1) / height,
-                                "x2": float(x2) / width,
-                                "y2": float(y2) / height,
-                                "conf": float(confs[i]) if confs is not None else None,
-                                "cls": cls_id,
-                                "label": class_names.get(str(cls_id), str(cls_id)),
-                            }
-                        )
-                yield _ndjson(
-                    {
-                        "type": "frame",
-                        "frame_idx": frame_idx,
-                        "t": t_sec,
-                        "boxes": boxes_out,
-                    }
-                )
-                emitted += 1
-
-            tracks = [
-                {
-                    "track_id": tid,
-                    "label": label_for[tid],
-                    "frames_seen": count,
-                    "time_on_screen_s": round(count / fps, 2),
-                }
-                for tid, count in frames_seen.items()
-            ]
-
-            print("frames_seen:", dict(frames_seen))
-            print("label_for:", label_for)
-
-            yield _ndjson({
-                "type": "done",
-                "total_frames": emitted,
-                "tracks": tracks,
-            })
-
-        except Exception as exc:
-            logger.exception("Error during streaming inference")
-            try:
-                yield _ndjson({"type": "error", "message": str(exc)})
-            except Exception:
-                pass
-        finally:
-            csv_file.close()
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                logger.warning("Could not delete temp file %s", tmp_path)
-
-    return StreamingResponse(stream(), media_type="application/x-ndjson")
-    
+    return {
+        "status": "processing",
+        "percent": 0,
+    }
