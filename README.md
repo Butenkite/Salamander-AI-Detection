@@ -123,6 +123,19 @@ Open `augmentations.pdf` in a browser or PDF viewer (the editor may not preview 
 
 ---
 
+## Dataset details
+The training dataset was created from salamander video footage by extracting frames using FFmpeg and labeling the salamanders manually in Label Studio. Approximately 150+ frames were labeled using a single class
+
+The dataset included a mix of:
+
+Different lighting conditions
+Motion blur
+Partial salamander visibility
+Salamanders near the edges of frames
+Various background textures and road surfaces
+
+The labeled dataset was exported from Label Studio in YOLO format and split into training and validation datasets
+
 ## 6. Train YOLO
 
 First run downloads the base weights (e.g. `yolo11n.pt`) if they are not already present.
@@ -216,6 +229,34 @@ npm run dev
 ```
 
 Open the printed URL (default `http://127.0.0.1:5173`), pick a video, click
-**Analyze**, and the boxes will be drawn live on top of the playing video.
-The API URL the frontend uses is configurable via `frontend\.env.local`
+**Analyze**. The frontend sends the video to the FastAPI backend, which processes the video asynchronously in a background thread. A live progress bar updates while the backend analyzes frames using YOLO tracking. After processing completes, the frontend displays tracking metrics for each salamander, including track ID, frames seen, and time on screen. `frontend\.env.local`
 (`VITE_API_URL=http://localhost:8000`).
+
+Implemented metrics
+
+1. Track ID
+   Identifies each tracked salamander across frames.
+
+2. Label
+   Shows the detected class, like Salamander.
+
+3. Frames Seen
+   Counts how many frames each salamander appeared in.
+
+4. Time on Screen
+   Converts frames seen into seconds using FPS.
+
+5. CSV Box Coordinates
+   Saves frame number, time, track_id, label, x1, y1, x2, y2, and confidence.
+
+6. Progress Percent
+   Shows how far the backend is through processing the video.
+
+
+## Unique metrics added: Frames seen and CSV coordinate export
+
+The main required metric was time on screen per tracked salamander. 
+
+Added a unique metric called Frames Seen, which shows exactly how many video frames each tracked salamander appeared in before converting that into seconds. 
+
+Exported per-frame bounding box coordinates to a CSV, so the detections can be reviewed or analyzed outside the web app.
