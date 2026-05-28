@@ -62,10 +62,67 @@ input[type="file"] {
   color: var(--color-muted);
 }
 
+.workspace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-lg);
+  margin-top: var(--space-md);
+}
+
+.workspace-main {
+  flex: 1 1 480px;
+  min-width: 0;
+}
+
+.stats-panel {
+  flex: 0 0 220px;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-panel);
+  font-size: var(--font-size-small);
+}
+
+.stats-panel h2 {
+  margin: 0 0 var(--space-md);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.stat-list {
+  margin: 0;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.stat-row:last-child {
+  border-bottom: none;
+}
+
+.stat-row dt {
+  margin: 0;
+  color: var(--color-muted);
+  font-weight: normal;
+}
+
+.stat-row dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
 .player-wrap {
   position: relative;
   display: inline-block;
-  margin-top: var(--space-md);
   border: 1px solid var(--color-border);
   background: #000;
 }

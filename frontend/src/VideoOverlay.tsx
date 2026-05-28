@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { AnalyzeMeta, DetectionFrame } from "./api";
 
 interface Props {
@@ -13,6 +13,24 @@ interface ContentRect {
   width: number;
   height: number;
 }
+
+interface PathPoint {
+  t: number;
+  cx: number;
+  cy: number;
+}
+
+/** Centroid trail per track_id (same data as CSV rows, normalized coords). */
+type TrackPaths = Map<number, PathPoint[]>;
+
+const PATH_COLORS = [
+  "#e6a700",
+  "#2a7a3a",
+  "#2563eb",
+  "#c026d3",
+  "#dc2626",
+  "#0891b2",
+];
 
 function getContentRect(video: HTMLVideoElement): ContentRect {
   const elementW = video.clientWidth;
@@ -38,7 +56,6 @@ function getContentRect(video: HTMLVideoElement): ContentRect {
   }
 }
 
-/** Binary-search the frame whose `t` is nearest to the playback time. */
 function findNearestFrame(
   frames: DetectionFrame[],
   t: number,
@@ -59,6 +76,24 @@ function findNearestFrame(
   return candidate;
 }
 
+function buildTrackPaths(frames: DetectionFrame[]): TrackPaths {
+  const paths: TrackPaths = new Map();
+
+  for (const frame of frames) {
+    for (const box of frame.boxes) {
+      if (box.track_id == null) continue;
+
+      const cx = (box.x1 + box.x2) / 2;
+      const cy = (box.y1 + box.y2) / 2;
+      const list = paths.get(box.track_id) ?? [];
+      list.push({ t: frame.t, cx, cy });
+      paths.set(box.track_id, list);
+    }
+  }
+
+  return paths;
+}
+
 function readCssColor(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement)
     .getPropertyValue(name)
@@ -66,13 +101,66 @@ function readCssColor(name: string, fallback: string): string {
   return v || fallback;
 }
 
+function toScreen(
+  rect: ContentRect,
+  cx: number,
+  cy: number,
+): [number, number] {
+  return [rect.offsetX + cx * rect.width, rect.offsetY + cy * rect.height];
+}
+
+function drawTrackPaths(
+  ctx: CanvasRenderingContext2D,
+  paths: TrackPaths,
+  rect: ContentRect,
+  currentTime: number,
+) {
+  for (const [trackId, points] of paths) {
+    const visible = points.filter((p) => p.t <= currentTime + 1e-6);
+    if (visible.length === 0) continue;
+
+    const color = PATH_COLORS[trackId % PATH_COLORS.length];
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    if (visible.length === 1) {
+      const [x, y] = toScreen(rect, visible[0].cx, visible[0].cy);
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+
+    ctx.beginPath();
+    const [x0, y0] = toScreen(rect, visible[0].cx, visible[0].cy);
+    ctx.moveTo(x0, y0);
+    for (let i = 1; i < visible.length; i++) {
+      const [x, y] = toScreen(rect, visible[i].cx, visible[i].cy);
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    const last = visible[visible.length - 1];
+    const [lx, ly] = toScreen(rect, last.cx, last.cy);
+    ctx.beginPath();
+    ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 export function VideoOverlay({ videoUrl, frames, meta }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const framesRef = useRef<DetectionFrame[]>(frames);
+  const pathsRef = useRef<TrackPaths>(new Map());
   const rafRef = useRef<number | null>(null);
 
+  const trackPaths = useMemo(() => buildTrackPaths(frames), [frames]);
   framesRef.current = frames;
+  pathsRef.current = trackPaths;
 
   useEffect(() => {
     const video = videoRef.current;
@@ -102,6 +190,8 @@ export function VideoOverlay({ videoUrl, frames, meta }: Props) {
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      drawTrackPaths(ctx, pathsRef.current, rect, t);
+
       const list = framesRef.current;
       const frame = findNearestFrame(list, t);
       const fps = meta?.fps ?? 0;
@@ -122,10 +212,12 @@ export function VideoOverlay({ videoUrl, frames, meta }: Props) {
           ctx.fillRect(x, y, w, h);
           ctx.strokeRect(x, y, w, h);
 
+          const trackTag =
+            box.track_id != null ? ` #${box.track_id}` : "";
           const label =
             box.conf != null
-              ? `${box.label} ${(box.conf * 100).toFixed(0)}%`
-              : box.label;
+              ? `${box.label}${trackTag} ${(box.conf * 100).toFixed(0)}%`
+              : `${box.label}${trackTag}`;
           const padding = 3;
           const textWidth = ctx.measureText(label).width;
           const textH = 14;

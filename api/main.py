@@ -1,21 +1,19 @@
 """FastAPI inference server for salamander video detection.
 
-Accepts a video upload, runs YOLO (Ultralytics) frame-by-frame, and streams
-each frame's detections back as newline-delimited JSON so a React frontend
-can show progress as the analysis runs.
+Accepts a video upload and streams newline-delimited JSON (NDJSON) from
+``POST /analyze`` as YOLO tracking runs — one line per event:
+
+    {"type": "meta", "fps": ..., "width": ..., ...}
+    {"type": "frame", "frame_idx": 0, "t": 0.0, "boxes": [...], "percent": 1}
+    ...
+    {"type": "done", "total_frames": N, "tracks": [...]}
+
+The final ``done`` line includes track metrics; boxes are normalized 0–1 for
+the React overlay. Pixel coordinates are also written to ``videos/tracks.csv``.
 
 Run from the repo root:
 
     uvicorn api.main:app --reload --port 8000
-
-The response from ``POST /analyze`` is ``application/x-ndjson``. Each line is
-one JSON object with a ``type`` field:
-
-    {"type": "meta",  "fps": ..., "width": ..., "height": ..., "frame_count": ..., "duration_sec": ..., "class_names": {...}}
-    {"type": "frame", "frame_idx": 0, "t": 0.0, "boxes": [{"x1":...,"y1":...,"x2":...,"y2":...,"conf":...,"cls":...,"label":...}, ...]}
-    {"type": "frame", "frame_idx": 1, ...}
-    ...
-    {"type": "done",  "total_frames": N}
 
 Environment variables:
     SALAMANDER_WEIGHTS  Path to the trained weights (default
@@ -36,10 +34,10 @@ import json
 import logging
 import os
 import tempfile
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterator
-from threading import Thread
-from collections import defaultdict
+
 import cv2
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -89,7 +87,7 @@ def _allowed_origins() -> list[str]:
 
 
 app = FastAPI(title="Salamander video detector", version="0.1.0")
-job = {"status": "idle"}
+job: dict[str, Any] = {"status": "idle"}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins(),
@@ -136,112 +134,142 @@ def health() -> dict[str, Any]:
         "device": _device(),
     }
 
-def run_analyze_job(
+
+def _ndjson_line(obj: dict[str, Any]) -> str:
+    return json.dumps(obj, separators=(",", ":")) + "\n"
+
+
+def _track_video_events(
     tmp_path: Path,
     fps: float,
     width: int,
     height: int,
     frame_count: int,
     class_names: dict[str, str],
-) -> None:
-    try:
-        job.clear()
-        job["status"] = "processing"
-        job["percent"] = 0
+) -> Iterator[dict[str, Any]]:
+    """Run YOLO tracking and yield meta / frame / done events."""
+    duration_sec = frame_count / fps if fps > 0 else 0.0
 
-        model = get_model()
+    yield {
+        "type": "meta",
+        "fps": fps,
+        "width": width,
+        "height": height,
+        "frame_count": frame_count,
+        "duration_sec": round(duration_sec, 2),
+        "class_names": class_names,
+    }
 
-        frames_seen = defaultdict(int)
-        label_for = {}
+    model = get_model()
+    frames_seen: defaultdict[int, int] = defaultdict(int)
+    label_for: dict[int, str] = {}
 
-        csv_path = REPO_ROOT / "videos" / "tracks.csv"
-        csv_path.parent.mkdir(exist_ok=True)
+    csv_path = REPO_ROOT / "videos" / "tracks.csv"
+    csv_path.parent.mkdir(exist_ok=True)
 
-        with open(csv_path, "w", newline="") as csv_file:
-            csv_writer = csv.writer(csv_file)
+    with open(csv_path, "w", newline="") as csv_file:
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow([
+            "frame_idx",
+            "time_seconds",
+            "track_id",
+            "label",
+            "x1",
+            "y1",
+            "x2",
+            "y2",
+            "confidence",
+        ])
 
-            csv_writer.writerow([
-                "frame_idx",
-                "time_seconds",
-                "track_id",
-                "label",
-                "x1",
-                "y1",
-                "x2",
-                "y2",
-                "confidence"
-            ])
+        results_iter = model.track(
+            source=str(tmp_path),
+            stream=True,
+            persist=True,
+            imgsz=_imgsz(),
+            conf=_conf(),
+            device=_device(),
+            verbose=False,
+        )
 
-            results_iter = model.track(
-                source=str(tmp_path),
-                stream=True,
-                persist=True,
-                imgsz=_imgsz(),
-                conf=_conf(),
-                device=_device(),
-                verbose=False,
+        frame_idx = -1
+        for frame_idx, result in enumerate(results_iter):
+            t_sec = frame_idx / fps if fps > 0 else 0.0
+            frame_boxes: list[dict[str, Any]] = []
+
+            boxes = getattr(result, "boxes", None)
+
+            if boxes is not None and len(boxes) > 0:
+                xyxy = boxes.xyxy.cpu().numpy()
+                confs = boxes.conf.cpu().numpy() if boxes.conf is not None else None
+                clss = boxes.cls.cpu().numpy().astype(int) if boxes.cls is not None else None
+                ids = boxes.id.cpu().numpy().astype(int) if boxes.id is not None else None
+
+                for i in range(len(xyxy)):
+                    x1, y1, x2, y2 = xyxy[i].tolist()
+
+                    cls_id = int(clss[i]) if clss is not None else -1
+                    track_id = int(ids[i]) if ids is not None else None
+                    label = class_names.get(str(cls_id), str(cls_id))
+                    conf_val = float(confs[i]) if confs is not None else None
+
+                    if track_id is not None:
+                        frames_seen[track_id] += 1
+                        label_for[track_id] = label
+
+                    csv_writer.writerow([
+                        frame_idx,
+                        round(t_sec, 2),
+                        track_id,
+                        label,
+                        round(float(x1), 2),
+                        round(float(y1), 2),
+                        round(float(x2), 2),
+                        round(float(y2), 2),
+                        round(conf_val, 4) if conf_val is not None else None,
+                    ])
+
+                    frame_boxes.append({
+                        "x1": round(float(x1) / width, 6),
+                        "y1": round(float(y1) / height, 6),
+                        "x2": round(float(x2) / width, 6),
+                        "y2": round(float(y2) / height, 6),
+                        "conf": round(conf_val, 4) if conf_val is not None else None,
+                        "cls": cls_id,
+                        "label": label,
+                        "track_id": track_id,
+                    })
+
+            percent = (
+                int(((frame_idx + 1) / frame_count) * 100)
+                if frame_count > 0
+                else 0
             )
+            job["percent"] = percent
 
-            for frame_idx, result in enumerate(results_iter):
-                t_sec = frame_idx / fps if fps > 0 else 0.0
-
-                boxes = getattr(result, "boxes", None)
-
-                if boxes is not None and len(boxes) > 0:
-                    xyxy = boxes.xyxy.cpu().numpy()
-                    confs = boxes.conf.cpu().numpy() if boxes.conf is not None else None
-                    clss = boxes.cls.cpu().numpy().astype(int) if boxes.cls is not None else None
-                    ids = boxes.id.cpu().numpy().astype(int) if boxes.id is not None else None
-
-                    for i in range(len(xyxy)):
-                        x1, y1, x2, y2 = xyxy[i].tolist()
-
-                        cls_id = int(clss[i]) if clss is not None else -1
-                        track_id = int(ids[i]) if ids is not None else None
-                        label = class_names.get(str(cls_id), str(cls_id))
-
-                        if track_id is not None:
-                            frames_seen[track_id] += 1
-                            label_for[track_id] = label
-
-                        csv_writer.writerow([
-                            frame_idx,
-                            round(t_sec, 2),
-                            track_id,
-                            label,
-                            round(float(x1), 2),
-                            round(float(y1), 2),
-                            round(float(x2), 2),
-                            round(float(y2), 2),
-                            round(float(confs[i]), 4) if confs is not None else None
-                        ])
-
-                if frame_count > 0:
-                    job["percent"] = int(((frame_idx + 1) / frame_count) * 100)
-
-        tracks = [
-            {
-                "track_id": tid,
-                "label": label_for[tid],
-                "frames_seen": count,
-                "time_on_screen_s": round(count / fps, 2),
+            yield {
+                "type": "frame",
+                "frame_idx": frame_idx,
+                "t": round(t_sec, 4),
+                "boxes": frame_boxes,
+                "percent": percent,
             }
-            for tid, count in frames_seen.items()
-        ]
 
-        job.clear()
-        job["status"] = "done"
-        job["percent"] = 100
-        job["result"] = {
-            "tracks": tracks,
+    tracks = [
+        {
+            "track_id": tid,
+            "label": label_for[tid],
+            "frames_seen": count,
+            "time_on_screen_s": round(count / fps, 2),
         }
+        for tid, count in frames_seen.items()
+    ]
 
-        tmp_path.unlink(missing_ok=True)
+    yield {
+        "type": "done",
+        "total_frames": max(0, frame_idx + 1),
+        "tracks": tracks,
+    }
 
-    except Exception as e:
-        job.clear()
-        job["status"] = "error"
-        job["message"] = str(e)
 
 @app.get("/analyze")
 def get_analyze_status() -> dict[str, Any]:
@@ -263,10 +291,6 @@ def _probe_video(path: Path) -> tuple[float, int, int, int]:
     if fps <= 0 or width <= 0 or height <= 0:
         raise HTTPException(status_code=400, detail="Invalid video metadata (fps/size).")
     return fps, width, height, frame_count
-
-
-def _ndjson(obj: dict[str, Any]) -> bytes:
-    return (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 @app.post("/analyze")
@@ -305,13 +329,28 @@ async def analyze(file: UploadFile = File(...)) -> StreamingResponse:
         tmp_path.unlink(missing_ok=True)
         raise
 
-    Thread(
-        target=run_analyze_job,
-        args=(tmp_path, fps, width, height, frame_count, class_names),
-        daemon=True,
-    ).start()
+    def stream_body() -> Iterator[bytes]:
+        job.clear()
+        job["status"] = "processing"
+        job["percent"] = 0
+        try:
+            for event in _track_video_events(
+                tmp_path, fps, width, height, frame_count, class_names
+            ):
+                yield _ndjson_line(event).encode("utf-8")
+            job.clear()
+            job["status"] = "done"
+            job["percent"] = 100
+        except Exception as exc:
+            logger.exception("Analyze failed")
+            job.clear()
+            job["status"] = "error"
+            job["message"] = str(exc)
+            yield _ndjson_line({"type": "error", "message": str(exc)}).encode("utf-8")
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
-    return {
-        "status": "processing",
-        "percent": 0,
-    }
+    return StreamingResponse(
+        stream_body(),
+        media_type="application/x-ndjson",
+    )
