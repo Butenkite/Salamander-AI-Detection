@@ -10,6 +10,7 @@ interface Props {
   frames: DetectionFrame[];
   tracks: TrackMetric[];
   fileName: string | null;
+  runId?: string | null;
   errorMessage?: string;
 }
 
@@ -43,11 +44,17 @@ export function StatsPanel({
   frames,
   tracks,
   fileName,
+  runId,
   errorMessage,
 }: Props) {
   const totalFrames = meta?.frame_count ?? 0;
-  const framesWithDetections = frames.filter((f) => f.boxes.length > 0).length;
-  const totalDetections = frames.reduce((n, f) => n + f.boxes.length, 0);
+  const framesWithDetections = frames.filter(
+    (f) => (f.boxes?.length ?? 0) > 0,
+  ).length;
+  const totalDetections = frames.reduce(
+    (n, f) => n + (f.boxes?.length ?? 0),
+    0,
+  );
   const uniqueTrackIds = new Set(
     frames.flatMap((f) =>
       f.boxes.map((b) => b.track_id).filter((id): id is number => id != null),
@@ -56,7 +63,10 @@ export function StatsPanel({
 
   const timeProcessed =
     meta && meta.fps > 0 ? (processedFrames / meta.fps).toFixed(2) : "—";
-  const duration = meta ? meta.duration_sec.toFixed(2) : "—";
+  const duration =
+    meta && typeof meta.duration_sec === "number"
+      ? meta.duration_sec.toFixed(2)
+      : "—";
 
   return (
     <aside className="stats-panel">
@@ -65,6 +75,7 @@ export function StatsPanel({
       <dl className="stat-list">
         <StatRow label="Status" value={statusLabel(status)} />
         {fileName && <StatRow label="File" value={fileName} />}
+        {runId && <StatRow label="Run ID" value={runId} />}
         {status === "error" && errorMessage && (
           <StatRow label="Error" value={errorMessage} />
         )}
@@ -87,7 +98,12 @@ export function StatsPanel({
             <StatRow label="Time processed" value={`${timeProcessed} s`} />
             <StatRow label="Duration" value={`${duration} s`} />
             <StatRow label="Resolution" value={`${meta.width}×${meta.height}`} />
-            <StatRow label="FPS" value={meta.fps.toFixed(2)} />
+            <StatRow
+              label="FPS"
+              value={
+                typeof meta.fps === "number" ? meta.fps.toFixed(2) : "—"
+              }
+            />
             <StatRow
               label="Frames w/ detections"
               value={framesWithDetections}

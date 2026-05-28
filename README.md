@@ -229,8 +229,11 @@ npm run dev
 ```
 
 Open the printed URL (default `http://127.0.0.1:5173`), pick a video, click
-**Analyze**. The API streams detections frame-by-frame (NDJSON) while YOLO runs; bounding boxes appear on the video as each frame is analyzed — you can play the video during processing. When finished, a table shows tracking metrics (track ID, frames seen, time on screen). Configure the API URL in `frontend\.env.local`
-(`VITE_API_URL=http://localhost:8000`).
+**Analyze**. The API streams detections frame-by-frame (NDJSON) while YOLO runs; bounding boxes and movement paths appear on the video as each frame is analyzed. When finished, a table shows tracking metrics (track ID, frames seen, time on screen).
+
+Each completed run is saved under `videos\exports\<run_id>\` (source video, `tracks.csv`, `meta.json`). Use **Previous runs → Open** to reload a run instantly without re-running the model.
+
+Configure the API URL in `frontend\.env.local` (`VITE_API_URL=http://localhost:8000`).
 
 Implemented metrics
 

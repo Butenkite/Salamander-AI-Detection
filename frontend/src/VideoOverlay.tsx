@@ -80,7 +80,7 @@ function buildTrackPaths(frames: DetectionFrame[]): TrackPaths {
   const paths: TrackPaths = new Map();
 
   for (const frame of frames) {
-    for (const box of frame.boxes) {
+    for (const box of frame.boxes ?? []) {
       if (box.track_id == null) continue;
 
       const cx = (box.x1 + box.x2) / 2;
@@ -196,14 +196,15 @@ export function VideoOverlay({ videoUrl, frames, meta }: Props) {
       const frame = findNearestFrame(list, t);
       const fps = meta?.fps ?? 0;
       const tolerance = fps > 0 ? 1 / fps : Number.POSITIVE_INFINITY;
-      if (frame && Math.abs(frame.t - t) <= tolerance && frame.boxes.length > 0) {
+      const boxes = frame?.boxes ?? [];
+      if (frame && Math.abs(frame.t - t) <= tolerance && boxes.length > 0) {
         ctx.lineWidth = 2;
         ctx.strokeStyle = stroke;
         ctx.fillStyle = fill;
         ctx.font = "12px system-ui, sans-serif";
         ctx.textBaseline = "top";
 
-        for (const box of frame.boxes) {
+        for (const box of boxes) {
           const x = rect.offsetX + box.x1 * rect.width;
           const y = rect.offsetY + box.y1 * rect.height;
           const w = (box.x2 - box.x1) * rect.width;
