@@ -69,7 +69,7 @@ export function StatsPanel({
       : "—";
 
   return (
-    <aside className="stats-panel">
+    <aside className="stats-panel panel">
       <h2>Analysis</h2>
 
       <dl className="stat-list">

@@ -44,7 +44,7 @@ export function PreviousRuns({
   }, [load, refreshToken]);
 
   return (
-    <section className="previous-runs">
+    <section className="previous-runs panel">
       <div className="previous-runs-header">
         <h2>Previous runs</h2>
         <button type="button" onClick={() => void load()} disabled={loading}>
